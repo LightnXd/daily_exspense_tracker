@@ -148,6 +148,7 @@ class _ReportPageState extends State<ReportPage> {
               const SizedBox(width: 12),
               Text(_dateFmt.format(p.date),
                   style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              const sizedBox(width: 20),
             ],
           ),
           if (p.desc != null && p.desc!.isNotEmpty)
