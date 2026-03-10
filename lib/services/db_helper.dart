@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart';
@@ -22,15 +21,15 @@ class DBHelper {
 
     _db = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE daily_entries (
             date TEXT PRIMARY KEY,
-            breakfast INTEGER,
-            lunch INTEGER,
-            dinner INTEGER,
-            snack INTEGER
+            breakfast REAL,
+            lunch REAL,
+            dinner REAL,
+            snack REAL
           )
         ''');
         await db.execute('''
@@ -39,7 +38,7 @@ class DBHelper {
             type TEXT NOT NULL,
             name TEXT NOT NULL,
             color TEXT,
-            price INTEGER NOT NULL,
+            price REAL NOT NULL,
             date TEXT NOT NULL,
             desc TEXT
           )
@@ -53,12 +52,15 @@ class DBHelper {
               type TEXT NOT NULL,
               name TEXT NOT NULL,
               color TEXT,
-              price INTEGER NOT NULL,
+              price REAL NOT NULL,
               date TEXT NOT NULL,
               desc TEXT
             )
           ''');
         }
+        // v3: price columns changed to REAL affinity.
+        // SQLite stores the actual numeric type regardless of declared affinity,
+        // so existing integer values continue to work without data migration.
       },
     );
     return _db!;
@@ -127,26 +129,206 @@ class DBHelper {
 
   // ── export / import ──────────────────────────────────────────────────────
 
-  /// Export all entries as a JSON file in the app documents directory.
-  /// Returns the saved file path.
-  Future<String> exportToJsonFile() async {
-    final entries = await getAllEntries();
-    final list = entries.map((e) => e.toMap()).toList();
-    final jsonStr = jsonEncode(list);
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/daily_expense_export_${DateTime.now().toIso8601String().replaceAll(':', '-')}.json');
-    await file.writeAsString(jsonStr);
-    return file.path;
+  static String _escapeCsvField(String? value) {
+    if (value == null) return '';
+    if (value.contains(',') || value.contains('"') || value.contains('\n')) {
+      return '"${value.replaceAll('"', '""')}"';
+    }
+    return value;
   }
 
-  /// Import entries from a JSON string. The JSON should be a list of objects matching DailyEntry.toMap().
-  Future<void> importFromJsonString(String jsonStr) async {
-    final list = jsonDecode(jsonStr) as List<dynamic>;
-    for (final item in list) {
-      if (item is Map<String, dynamic>) {
-        final entry = DailyEntry.fromMap(item);
-        await upsertEntry(entry);
+  static String _numToCsv(double v) =>
+      v % 1 == 0 ? v.toInt().toString() : v.toStringAsFixed(2);
+
+  static List<String> _parseCsvLine(String line) {
+    final result = <String>[];
+    int i = 0;
+    while (i < line.length) {
+      if (line[i] == '"') {
+        i++;
+        final sb = StringBuffer();
+        while (i < line.length) {
+          if (line[i] == '"' && i + 1 < line.length && line[i + 1] == '"') {
+            sb.write('"');
+            i += 2;
+          } else if (line[i] == '"') {
+            i++;
+            break;
+          } else {
+            sb.write(line[i]);
+            i++;
+          }
+        }
+        result.add(sb.toString());
+        if (i < line.length && line[i] == ',') i++;
+      } else {
+        final start = i;
+        while (i < line.length && line[i] != ',') i++;
+        result.add(line.substring(start, i));
+        if (i < line.length) i++;
       }
+    }
+    return result;
+  }
+
+  /// Export entries and special purchases within [from]..[to] (inclusive) as CSV.
+  /// Returns the CSV content as a string.
+  Future<String> exportToCsvString(DateTime from, DateTime to) async {
+    final fromStr = from.toIso8601String().split('T').first;
+    final toStr = to.toIso8601String().split('T').first;
+    final db = await _open();
+
+    final entryRes = await db.rawQuery(
+      'SELECT * FROM daily_entries WHERE date >= ? AND date <= ? ORDER BY date ASC',
+      [fromStr, toStr],
+    );
+    final entries = entryRes.map((m) => DailyEntry.fromMap(m)).toList();
+
+    final purchaseRes = await db.rawQuery(
+      'SELECT * FROM grand_purchase WHERE date >= ? AND date <= ? ORDER BY date ASC',
+      [fromStr, toStr],
+    );
+    final purchases = purchaseRes.map((m) => GrandPurchase.fromMap(m)).toList();
+
+    final buf = StringBuffer();
+
+    buf.writeln('DAILY_ENTRIES');
+    buf.writeln('date,breakfast,lunch,dinner,snack');
+    for (final e in entries) {
+      buf.writeln([
+        e.date.toIso8601String().split('T').first,
+        e.breakfast == null ? '' : _numToCsv(e.breakfast!),
+        e.lunch == null ? '' : _numToCsv(e.lunch!),
+        e.dinner == null ? '' : _numToCsv(e.dinner!),
+        e.snack == null ? '' : _numToCsv(e.snack!),
+      ].join(','));
+    }
+
+    buf.writeln();
+
+    buf.writeln('GRAND_PURCHASE');
+    buf.writeln('type,name,color,price,date,desc');
+    for (final p in purchases) {
+      buf.writeln([
+        _escapeCsvField(p.type),
+        _escapeCsvField(p.name),
+        _escapeCsvField(p.color),
+        _numToCsv(p.price),
+        p.date.toIso8601String().split('T').first,
+        _escapeCsvField(p.desc),
+      ].join(','));
+    }
+
+    return buf.toString();
+  }
+
+  /// Import entries and special purchases from a CSV string.
+  /// For grand_purchase: skips rows where type+name+date already exist.
+  Future<void> importFromCsvString(String csvContent) async {
+    final lines = csvContent.split('\n').map((l) => l.trimRight()).toList();
+    String? section;
+    bool headerSkipped = false;
+    final existingPurchases = await getAllGrandPurchases();
+
+    for (final line in lines) {
+      if (line.isEmpty) {
+        headerSkipped = false;
+        continue;
+      }
+      if (line == 'DAILY_ENTRIES') {
+        section = 'daily_entries';
+        headerSkipped = false;
+        continue;
+      }
+      if (line == 'GRAND_PURCHASE') {
+        section = 'grand_purchase';
+        headerSkipped = false;
+        continue;
+      }
+      if (!headerSkipped) {
+        headerSkipped = true;
+        continue;
+      }
+
+      final fields = _parseCsvLine(line);
+
+      if (section == 'daily_entries' && fields.length >= 5) {
+        try {
+          await upsertEntry(DailyEntry(
+            date: DateTime.parse(fields[0]),
+            breakfast: fields[1].isEmpty ? null : double.parse(fields[1]),
+            lunch: fields[2].isEmpty ? null : double.parse(fields[2]),
+            dinner: fields[3].isEmpty ? null : double.parse(fields[3]),
+            snack: fields[4].isEmpty ? null : double.parse(fields[4]),
+          ));
+        } catch (_) {}
+      } else if (section == 'grand_purchase' && fields.length >= 5) {
+        try {
+          final p = GrandPurchase(
+            type: fields[0],
+            name: fields[1],
+            color: fields[2].isEmpty ? null : fields[2],
+            price: double.parse(fields[3]),
+            date: DateTime.parse(fields[4]),
+            desc: fields.length > 5 && fields[5].isNotEmpty ? fields[5] : null,
+          );
+          final dateStr = p.date.toIso8601String().split('T').first;
+          final isDuplicate = existingPurchases.any((e) =>
+              e.type == p.type &&
+              e.name == p.name &&
+              e.date.toIso8601String().split('T').first == dateStr);
+          if (!isDuplicate) {
+            await insertGrandPurchase(p);
+            existingPurchases.add(p);
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  // ── bulk change ───────────────────────────────────────────────────────────
+
+  double _applyOp(double value, String operation, double operand) {
+    double result;
+    switch (operation) {
+      case 'add':
+        result = value + operand;
+        break;
+      case 'subtract':
+        result = value - operand;
+        break;
+      case 'multiply':
+        result = value * operand;
+        break;
+      case 'divide':
+        result = operand != 0 ? value / operand : value;
+        break;
+      default:
+        result = value;
+    }
+    return (result * 100).roundToDouble() / 100;
+  }
+
+  Future<void> applyBulkChange(String operation, double operand) async {
+    final db = await _open();
+    final entries = await getAllEntries();
+    for (final e in entries) {
+      await upsertEntry(DailyEntry(
+        date: e.date,
+        breakfast: e.breakfast != null ? _applyOp(e.breakfast!, operation, operand) : null,
+        lunch: e.lunch != null ? _applyOp(e.lunch!, operation, operand) : null,
+        dinner: e.dinner != null ? _applyOp(e.dinner!, operation, operand) : null,
+        snack: e.snack != null ? _applyOp(e.snack!, operation, operand) : null,
+      ));
+    }
+    final purchases = await getAllGrandPurchases();
+    for (final p in purchases) {
+      await db.update(
+        'grand_purchase',
+        {'price': _applyOp(p.price, operation, operand)},
+        where: 'id = ?',
+        whereArgs: [p.id],
+      );
     }
   }
 }

@@ -3,7 +3,7 @@ class GrandPurchase {
   final String type;
   final String name;
   final String? color;
-  final int price;
+  final double price;
   final DateTime date;
   final String? desc;
 
@@ -29,7 +29,7 @@ class GrandPurchase {
       type: m['type'] as String,
       name: m['name'] as String,
       color: m['color'] as String?,
-      price: m['price'] as int,
+      price: (m['price'] as num).toDouble(),
       date: DateTime.parse(m['date'] as String),
       desc: m['desc'] as String?,
     );

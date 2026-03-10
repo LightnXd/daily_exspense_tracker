@@ -31,8 +31,11 @@ class _SpecialPageState extends State<SpecialPage> {
   final _descCtrl = TextEditingController();
   bool _saving = false;
 
+  int _year = DateTime.now().year;
+  int _month = DateTime.now().month;
+
   List<GrandPurchase> _purchases = [];
-  final _fmt = NumberFormat('#,##0', 'en_US');
+  final _fmt = NumberFormat('#,##0.##', 'en_US');
   final _dateFmt = DateFormat('dd/MM/yyyy');
 
   @override
@@ -51,8 +54,8 @@ class _SpecialPageState extends State<SpecialPage> {
   }
 
   Future<void> _loadList() async {
-    final list = await DBHelper().getAllGrandPurchases();
-    if (mounted) setState(() => _purchases = list);
+    final list = await DBHelper().getGrandPurchasesForMonth(_year, _month);
+    if (mounted) setState(() => _purchases = list.reversed.toList());
   }
 
   Future<void> _pickDate() async {
@@ -74,7 +77,7 @@ class _SpecialPageState extends State<SpecialPage> {
       color: (_type == 'sanitation' && _colorCtrl.text.trim().isNotEmpty)
           ? _colorCtrl.text.trim()
           : null,
-      price: int.parse(_priceCtrl.text.replaceAll(',', '')),
+      price: double.parse(_priceCtrl.text.replaceAll(',', '')),
       date: _date,
       desc: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
     );
@@ -201,8 +204,8 @@ class _SpecialPageState extends State<SpecialPage> {
                     'Price',
                     TextFormField(
                       controller: _priceCtrl,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
                       decoration: const InputDecoration(
                         hintText: '0',
                         isDense: true,
@@ -261,10 +264,49 @@ class _SpecialPageState extends State<SpecialPage> {
             ),
           ),
           const Divider(height: 24),
+          // ── Month/Year filter ─────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+            child: Row(
+              children: [
+                DropdownButton<int>(
+                  value: _month,
+                  items: List.generate(
+                    12,
+                    (i) => DropdownMenuItem(
+                      value: i + 1,
+                      child: Text(DateFormat.MMMM().format(DateTime(0, i + 1))),
+                    ),
+                  ),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _month = v);
+                    _loadList();
+                  },
+                ),
+                const SizedBox(width: 12),
+                DropdownButton<int>(
+                  value: _year,
+                  items: List.generate(
+                    5,
+                    (i) => DropdownMenuItem(
+                      value: DateTime.now().year - 2 + i,
+                      child: Text('${DateTime.now().year - 2 + i}'),
+                    ),
+                  ),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _year = v);
+                    _loadList();
+                  },
+                ),
+              ],
+            ),
+          ),
           // ── List ──────────────────────────────────────────────────────
           Expanded(
             child: _purchases.isEmpty
-                ? const Center(child: Text('No entries yet'))
+                ? const Center(child: Text('No entries'))
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                     itemCount: _purchases.length,

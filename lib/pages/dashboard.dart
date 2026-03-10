@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/daily_entry.dart';
@@ -20,7 +21,7 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   DateTime _selected = DateTime.now();
   DailyEntry? _entry;
-  final _fmt = NumberFormat('#,##0', 'en_US');
+  final _fmt = NumberFormat('#,##0.##', 'en_US');
   final _controllers = {
     'breakfast': TextEditingController(),
     'lunch': TextEditingController(),
@@ -69,7 +70,7 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
-  int? _valueForKey(String k) {
+  double? _valueForKey(String k) {
     if (_entry == null) return null;
     switch (k) {
       case 'breakfast':
@@ -98,16 +99,14 @@ class _DashboardPageState extends State<DashboardPage> {
   void _formatController(String key) {
     final controller = _controllers[key]!;
     if (controller.text.trim().isEmpty) return;
-    final v = int.tryParse(controller.text.replaceAll(',', ''));
+    final v = double.tryParse(controller.text.replaceAll(',', ''));
     if (v != null) controller.text = _fmt.format(v);
   }
 
-  int? _parse(String t) {
+  double? _parse(String t) {
     if (t.trim().isEmpty) return null;
-    return int.tryParse(t.replaceAll(',', ''));
+    return double.tryParse(t.replaceAll(',', ''));
   }
-
-  String _formatNullable(int? v) => v == null ? '-' : _fmt.format(v);
 
   Widget _numberInput(String key, String label) {
     final controller = _controllers[key]!;
@@ -121,7 +120,7 @@ class _DashboardPageState extends State<DashboardPage> {
           controller: controller,
           focusNode: focusNode,
           keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
           decoration: InputDecoration(hintText: show ? null : '-'),
           onSubmitted: (_) {
             _formatController(key);
@@ -182,7 +181,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             ListTile(
               leading: const Icon(Icons.upload_file),
-              title: const Text('Export data'),
+              title: const Text('Export data (CSV)'),
               onTap: () async {
                 Navigator.pop(context);
                 await _exportData();
@@ -190,10 +189,18 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             ListTile(
               leading: const Icon(Icons.download),
-              title: const Text('Import data'),
+              title: const Text('Import data (CSV)'),
               onTap: () async {
                 Navigator.pop(context);
                 await _importData();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.tune),
+              title: const Text('Bulk value change'),
+              onTap: () async {
+                Navigator.pop(context);
+                await _showBulkChangeDialog();
               },
             ),
           ],
@@ -205,41 +212,221 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _exportData() async {
     try {
-      final path = await DBHelper().exportToJsonFile();
-      // Offer to share the file
-      await showDialog<void>(
+      final range = await showDateRangePicker(
         context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Export complete'),
-          content: Text('Data exported to:\n$path'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
-            TextButton(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  await Share.shareXFiles([XFile(path)], text: 'Daily expense export');
-                },
-                child: const Text('Share')),
-          ],
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2100),
+        initialDateRange: DateTimeRange(
+          start: DateTime(DateTime.now().year, DateTime.now().month, 1),
+          end: DateTime.now(),
         ),
       );
+      if (range == null || !mounted) return;
+
+      final csvContent = await DBHelper().exportToCsvString(range.start, range.end);
+      final from = DateFormat('yyyy-MM-dd').format(range.start);
+      final to = DateFormat('yyyy-MM-dd').format(range.end);
+      final fileName = 'expense_export_${from}_to_$to.csv';
+
+      String? savePath;
+      try {
+        savePath = await FilePicker.platform.saveFile(
+          fileName: fileName,
+          type: FileType.custom,
+          allowedExtensions: ['csv'],
+        );
+      } catch (_) {}
+
+      if (savePath != null) {
+        await File(savePath).writeAsString(csvContent);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Exported to $savePath'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        final dir = await getApplicationDocumentsDirectory();
+        final file = File('\${dir.path}/\$fileName');
+        await file.writeAsString(csvContent);
+        if (mounted) {
+          await showDialog<void>(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('Export complete'),
+              content: Text('Saved to:\n\${file.path}'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+                TextButton(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await Share.shareXFiles([XFile(file.path)], text: 'Expense export');
+                  },
+                  child: const Text('Share'),
+                ),
+              ],
+            ),
+          );
+        }
+      }
     } catch (e) {
-      await showDialog<void>(context: context, builder: (_) => AlertDialog(title: const Text('Error'), content: Text(e.toString()), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))]));
+      if (mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Error'),
+            content: Text(e.toString()),
+            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+          ),
+        );
+      }
     }
   }
 
   Future<void> _importData() async {
     try {
-      final res = await FilePicker.platform.pickFiles(type: FileType.any);
+      final res = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv'],
+      );
       if (res == null || res.files.isEmpty) return;
       final file = File(res.files.single.path!);
       final content = await file.readAsString();
-      await DBHelper().importFromJsonString(content);
-      await showDialog<void>(context: context, builder: (_) => AlertDialog(title: const Text('Import complete'), content: const Text('Data imported successfully.'), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))]));
+      await DBHelper().importFromCsvString(content);
       await _loadFor(_selected);
+      if (mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Import complete'),
+            content: const Text('Data imported successfully.'),
+            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+          ),
+        );
+      }
     } catch (e) {
-      await showDialog<void>(context: context, builder: (_) => AlertDialog(title: const Text('Error'), content: Text(e.toString()), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))]));
+      if (mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Error'),
+            content: Text(e.toString()),
+            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+          ),
+        );
+      }
     }
+  }
+
+  Future<void> _showBulkChangeDialog() async {
+    String operation = 'multiply';
+    final numCtrl = TextEditingController();
+    const ops = ['add', 'subtract', 'multiply', 'divide'];
+    const opLabels = {
+      'add': 'Add',
+      'subtract': 'Subtract',
+      'multiply': 'Multiply',
+      'divide': 'Divide',
+    };
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Bulk Value Change'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Applies to all daily entry and special purchase prices.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: operation,
+                decoration: const InputDecoration(
+                  labelText: 'Operation',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                ),
+                items: ops
+                    .map((op) => DropdownMenuItem(
+                          value: op,
+                          child: Text(opLabels[op]!),
+                        ))
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) setDialogState(() => operation = v);
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: numCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'Value',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                '* Warning: this will alter all existing price data. '
+                'Results will be rounded to a maximum of 2 decimal places.',
+                style: TextStyle(fontSize: 11, color: Colors.orange),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final val = double.tryParse(numCtrl.text);
+                if (val == null) return;
+                if (operation == 'divide' && val == 0) return;
+                Navigator.pop(ctx);
+                try {
+                  await DBHelper().applyBulkChange(operation, val);
+                  await _loadFor(_selected);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Bulk change applied'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    await showDialog<void>(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        title: const Text('Error'),
+                        content: Text(e.toString()),
+                        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+    numCtrl.dispose();
   }
 
   @override
@@ -272,7 +459,7 @@ class _DashboardPageState extends State<DashboardPage> {
             IconButton(onPressed: () => _changeDate(1), icon: const Icon(Icons.chevron_right)),
           ]),
           const SizedBox(height: 32),
-          Text('Remaining: ${NumberFormat('#,##0', 'en_US').format(left)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          Text('Remaining: ${_fmt.format(left)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 32),
           Expanded(
             child: ListView(

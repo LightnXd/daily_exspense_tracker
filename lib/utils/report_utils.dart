@@ -2,27 +2,27 @@ import '../models/daily_entry.dart';
 
 class DayRow {
   final int day;
-  final int? breakfast;
-  final int? lunch;
-  final int? dinner;
-  final int? snack;
-  final int left;
+  final double? breakfast;
+  final double? lunch;
+  final double? dinner;
+  final double? snack;
+  final double left;
 
   DayRow({required this.day, this.breakfast, this.lunch, this.dinner, this.snack, required this.left});
 }
 
 class MonthlyReport {
   final List<DayRow> days;
-  final int sumBreakfast;
-  final int sumLunch;
-  final int sumDinner;
-  final int sumSnack;
-  final int totalLeft;
-  final int? meanBreakfast;
-  final int? meanLunch;
-  final int? meanDinner;
-  final int? meanSnack;
-  final int? meanLeft;
+  final double sumBreakfast;
+  final double sumLunch;
+  final double sumDinner;
+  final double sumSnack;
+  final double totalLeft;
+  final double? meanBreakfast;
+  final double? meanLunch;
+  final double? meanDinner;
+  final double? meanSnack;
+  final double? meanLeft;
 
   MonthlyReport({
     required this.days,
@@ -43,9 +43,9 @@ MonthlyReport computeMonthlyReport(int year, int month, List<DailyEntry> entries
   final map = <int, DailyEntry>{};
   for (final e in entries) map[e.date.day] = e;
 
-  int sumBreakfast = 0, sumLunch = 0, sumDinner = 0, sumSnack = 0;
+  double sumBreakfast = 0, sumLunch = 0, sumDinner = 0, sumSnack = 0;
   int countBreakfast = 0, countLunch = 0, countDinner = 0, countSnack = 0;
-  int totalLeft = 0;
+  double totalLeft = 0;
   int countDaysWithEntries = 0;
 
   final lastDay = DateTime(year, month + 1, 0).day;
@@ -68,7 +68,7 @@ MonthlyReport computeMonthlyReport(int year, int month, List<DailyEntry> entries
       sumSnack += r!.snack!;
       countSnack++;
     }
-    final left = r != null ? budget - r.sum() : budget;
+    final double left = r != null ? budget - r.sum() : budget.toDouble();
     if (r != null) {
       totalLeft += left;
       countDaysWithEntries++;
@@ -76,11 +76,11 @@ MonthlyReport computeMonthlyReport(int year, int month, List<DailyEntry> entries
     days.add(DayRow(day: d, breakfast: r?.breakfast, lunch: r?.lunch, dinner: r?.dinner, snack: r?.snack, left: left));
   }
 
-  final meanBreakfast = countBreakfast == 0 ? null : (sumBreakfast / countBreakfast).round();
-  final meanLunch = countLunch == 0 ? null : (sumLunch / countLunch).round();
-  final meanDinner = countDinner == 0 ? null : (sumDinner / countDinner).round();
-  final meanSnack = countSnack == 0 ? null : (sumSnack / countSnack).round();
-  final meanLeft = countDaysWithEntries == 0 ? null : (totalLeft / countDaysWithEntries).round();
+  final meanBreakfast = countBreakfast == 0 ? null : sumBreakfast / countBreakfast;
+  final meanLunch = countLunch == 0 ? null : sumLunch / countLunch;
+  final meanDinner = countDinner == 0 ? null : sumDinner / countDinner;
+  final meanSnack = countSnack == 0 ? null : sumSnack / countSnack;
+  final meanLeft = countDaysWithEntries == 0 ? null : totalLeft / countDaysWithEntries;
 
   return MonthlyReport(
     days: days,

@@ -16,7 +16,7 @@ class ReportPage extends StatefulWidget {
 class _ReportPageState extends State<ReportPage> {
   int _year = DateTime.now().year;
   int _month = DateTime.now().month;
-  final _fmt = NumberFormat('#,##0', 'en_US');
+  final _fmt = NumberFormat('#,##0.##', 'en_US');
   final _dateFmt = DateFormat('dd/MM');
   List<DailyEntry> _rows = [];
   List<GrandPurchase> _specialRows = [];
@@ -112,7 +112,7 @@ class _ReportPageState extends State<ReportPage> {
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
       );
 
-  Widget _summaryLine(String label, int value, {Color? color}) => Padding(
+  Widget _summaryLine(String label, double value, {Color? color}) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
           children: [
@@ -174,10 +174,10 @@ class _ReportPageState extends State<ReportPage> {
         _specialRows.where((p) => p.type != 'food&drink'))
       ..sort((a, b) => a.date.compareTo(b.date));
 
-    final totalFoodDrink = foodItems.fold<int>(0, (s, p) => s + p.price);
+    final totalFoodDrink = foodItems.fold<double>(0, (s, p) => s + p.price);
     final totalFoodBudgetLeft = report.totalLeft - totalFoodDrink;
 
-    final totalAll = _specialRows.fold<int>(0, (s, p) => s + p.price);
+    final totalAll = _specialRows.fold<double>(0, (s, p) => s + p.price);
 
     // Days with entries for grand total formula
     final daysWithEntries = report.days
@@ -187,11 +187,11 @@ class _ReportPageState extends State<ReportPage> {
             d.dinner != null ||
             d.snack != null)
         .length;
-    final grandTotal =
+    final double grandTotal =
         totalAll + (budget * daysWithEntries - totalFoodBudgetLeft);
 
     // Per-type totals for other items
-    final typeMap = <String, int>{};
+    final typeMap = <String, double>{};
     for (final p in otherItems) {
       typeMap[p.type] = (typeMap[p.type] ?? 0) + p.price;
     }
