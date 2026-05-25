@@ -126,7 +126,11 @@ class DBHelper {
     final res = await db.query('grand_purchase', orderBy: 'date ASC');
     return res.map((m) => GrandPurchase.fromMap(m)).toList();
   }
-
+  Future<int> updateGrandPurchase(GrandPurchase p) async {
+    final db = await _open();
+    if (p.id == null) throw ArgumentError('GrandPurchase id is required for update');
+    return db.update('grand_purchase', p.toMap(), where: 'id = ?', whereArgs: [p.id]);
+  }
   // ── export / import ──────────────────────────────────────────────────────
 
   static String _escapeCsvField(String? value) {

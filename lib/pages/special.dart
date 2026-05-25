@@ -31,8 +31,11 @@ class _SpecialPageState extends State<SpecialPage> {
   final _descCtrl = TextEditingController();
   bool _saving = false;
 
-  int _year = DateTime.now().year;
-  int _month = DateTime.now().month;
+  int _filterYear = DateTime.now().year;
+  int _filterMonth = DateTime.now().month;
+
+  String _sortField = 'date';
+  bool _sortAscending = false; // default date desc
 
   List<GrandPurchase> _purchases = [];
   final _fmt = NumberFormat('#,##0.##', 'en_US');
@@ -53,9 +56,40 @@ class _SpecialPageState extends State<SpecialPage> {
     super.dispose();
   }
 
+  void _sortPurchases() {
+    _purchases.sort((a, b) {
+      int cmp;
+      if (_sortField == 'price') {
+        cmp = a.price.compareTo(b.price);
+      } else if (_sortField == 'alphabet') {
+        cmp = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      } else {
+        cmp = a.date.compareTo(b.date);
+      }
+      return _sortAscending ? cmp : -cmp;
+    });
+  }
+
   Future<void> _loadList() async {
-    final list = await DBHelper().getGrandPurchasesForMonth(_year, _month);
-    if (mounted) setState(() => _purchases = list.reversed.toList());
+    final list = await DBHelper().getGrandPurchasesForMonth(_filterYear, _filterMonth);
+    if (mounted) {
+      setState(() {
+        _purchases = list;
+        _sortPurchases();
+      });
+    }
+  }
+
+  void _onSortSelected(String field) {
+    setState(() {
+      if (_sortField == field) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortField = field;
+        _sortAscending = false; // start desc on new field
+      }
+      _sortPurchases();
+    });
   }
 
   Future<void> _pickDate() async {
@@ -119,6 +153,114 @@ class _SpecialPageState extends State<SpecialPage> {
     }
   }
 
+  Future<void> _edit(GrandPurchase p) async {
+    if (p.id == null) return;
+
+    final formKey = GlobalKey<FormState>();
+    String type = p.type;
+    final nameCtrl = TextEditingController(text: p.name);
+    final colorCtrl = TextEditingController(text: p.color ?? '');
+    final priceCtrl = TextEditingController(text: p.price.toString());
+    DateTime newDate = p.date;
+    final descCtrl = TextEditingController(text: p.desc ?? '');
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setState) {
+          final isSanitation = type == 'sanitation';
+
+          return AlertDialog(
+            title: const Text('Edit Purchase'),
+            content: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: type,
+                      items: kPurchaseTypes
+                          .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                          .toList(),
+                      onChanged: (v) {
+                        if (v != null) setState(() => type = v);
+                      },
+                      decoration: const InputDecoration(labelText: 'Type'),
+                    ),
+                    TextFormField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(labelText: 'Name'),
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                    ),
+                    if (isSanitation)
+                      TextFormField(
+                        controller: colorCtrl,
+                        decoration: const InputDecoration(labelText: 'Color'),
+                      ),
+                    TextFormField(
+                      controller: priceCtrl,
+                      decoration: const InputDecoration(labelText: 'Price'),
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) return 'Required';
+                        if (int.tryParse(v) == null) return 'Invalid number';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: ctx,
+                          initialDate: newDate,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime(2100),
+                        );
+                        if (picked != null) setState(() => newDate = picked);
+                      },
+                      child: Text(_dateFmt.format(newDate)),
+                    ),
+                    TextFormField(
+                      controller: descCtrl,
+                      maxLines: 2,
+                      decoration: const InputDecoration(labelText: 'Desc (optional)'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              TextButton(
+                onPressed: () async {
+                  if (!formKey.currentState!.validate()) return;
+                  final updated = GrandPurchase(
+                    id: p.id,
+                    type: type,
+                    name: nameCtrl.text.trim(),
+                    color: (type == 'sanitation' && colorCtrl.text.trim().isNotEmpty)
+                        ? colorCtrl.text.trim()
+                        : null,
+                    price: int.parse(priceCtrl.text.trim()),
+                    date: newDate,
+                    desc: descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+                  );
+                  await DBHelper().updateGrandPurchase(updated);
+                  Navigator.pop(ctx);
+                  await _loadList();
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        });
+      },
+    );
+  }
+
   Widget _row(String label, Widget input) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -140,9 +282,90 @@ class _SpecialPageState extends State<SpecialPage> {
     final isSanitation = _type == 'sanitation';
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Special Purchase')),
+      appBar: AppBar(
+        title: const Text('Special Purchase'),
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.sort),
+            onSelected: _onSortSelected,
+            itemBuilder: (ctx) {
+              final entries = [
+                'date',
+                'price',
+                'alphabet',
+              ];
+              return entries.map((key) {
+                final label = key == 'date'
+                    ? 'Date'
+                    : key == 'price'
+                        ? 'Price'
+                        : 'Alphabet';
+                final selected = key == _sortField;
+                final icon = selected
+                    ? Icon(
+                        _sortAscending ? Icons.arrow_upward : Icons.arrow_downward,
+                        size: 16,
+                      )
+                    : null;
+                return PopupMenuItem<String>(
+                  value: key,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(label),
+                      if (icon != null) icon,
+                    ],
+                  ),
+                );
+              }).toList();
+            },
+          ),
+        ],
+      ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Row(
+              children: [
+                DropdownButton<int>(
+                  value: _filterMonth,
+                  items: List.generate(
+                    12,
+                    (i) => DropdownMenuItem(
+                      value: i + 1,
+                      child: Text(DateFormat.MMMM().format(DateTime(0, i + 1))),
+                    ),
+                  ),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _filterMonth = v);
+                    _loadList();
+                  },
+                ),
+                const SizedBox(width: 12),
+                DropdownButton<int>(
+                  value: _filterYear,
+                  items: List.generate(
+                      5,
+                      (i) => DropdownMenuItem(
+                          value: DateTime.now().year - 2 + i,
+                          child: Text('${DateTime.now().year - 2 + i}'))),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _filterYear = v);
+                    _loadList();
+                  },
+                ),
+                const Spacer(),
+                Text(
+                  'Sort: ${_sortField[0].toUpperCase()}${_sortField.substring(1)} ${_sortAscending ? '↑' : '↓'}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
           // ── Form ──────────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -337,9 +560,18 @@ class _SpecialPageState extends State<SpecialPage> {
                               ),
                           ],
                         ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline, size: 20),
-                          onPressed: () => _delete(p),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit, size: 20),
+                              onPressed: () => _edit(p),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 20),
+                              onPressed: () => _delete(p),
+                            ),
+                          ],
                         ),
                       );
                     },

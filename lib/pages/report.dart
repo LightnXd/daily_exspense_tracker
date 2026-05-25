@@ -148,7 +148,7 @@ class _ReportPageState extends State<ReportPage> {
               const SizedBox(width: 12),
               Text(_dateFmt.format(p.date),
                   style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              const sizedBox(width: 20),
+              const SizedBox(width: 20),
             ],
           ),
           if (p.desc != null && p.desc!.isNotEmpty)
@@ -177,18 +177,9 @@ class _ReportPageState extends State<ReportPage> {
     final totalFoodDrink = foodItems.fold<double>(0, (s, p) => s + p.price);
     final totalFoodBudgetLeft = report.totalLeft - totalFoodDrink;
 
-    final totalAll = _specialRows.fold<double>(0, (s, p) => s + p.price);
-
-    // Days with entries for grand total formula
-    final daysWithEntries = report.days
-        .where((d) =>
-            d.breakfast != null ||
-            d.lunch != null ||
-            d.dinner != null ||
-            d.snack != null)
-        .length;
-    final double grandTotal =
-        totalAll + (budget * daysWithEntries - totalFoodBudgetLeft);
+    final totalOtherPurchases = otherItems.fold<double>(0, (s, p) => s + p.price);
+    final totalAll = totalFoodDrink + totalOtherPurchases;
+    final grandTotal = totalAll;
 
     // Per-type totals for other items
     final typeMap = <String, double>{};
