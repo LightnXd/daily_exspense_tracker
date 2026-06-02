@@ -179,7 +179,7 @@ class _ReportPageState extends State<ReportPage> {
 
     final totalOtherPurchases = otherItems.fold<double>(0, (s, p) => s + p.price);
     final totalAll = totalFoodDrink + totalOtherPurchases;
-    final grandTotal = totalAll;
+    final grandTotal = totalAll + report.totalDailyFood;
 
     // Per-type totals for other items
     final typeMap = <String, double>{};

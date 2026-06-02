@@ -18,6 +18,7 @@ class MonthlyReport {
   final double sumDinner;
   final double sumSnack;
   final double totalLeft;
+  final double totalDailyFood;
   final double? meanBreakfast;
   final double? meanLunch;
   final double? meanDinner;
@@ -81,6 +82,7 @@ MonthlyReport computeMonthlyReport(int year, int month, List<DailyEntry> entries
   final meanDinner = countDinner == 0 ? null : sumDinner / countDinner;
   final meanSnack = countSnack == 0 ? null : sumSnack / countSnack;
   final meanLeft = countDaysWithEntries == 0 ? null : totalLeft / countDaysWithEntries;
+  final totalDailyFood =  sumBreakfast + sumLunch + sumDinner + sumSnack;
 
   return MonthlyReport(
     days: days,
@@ -89,6 +91,7 @@ MonthlyReport computeMonthlyReport(int year, int month, List<DailyEntry> entries
     sumDinner: sumDinner,
     sumSnack: sumSnack,
     totalLeft: totalLeft,
+    totalDailyFood: totalDailyFood,
     meanBreakfast: meanBreakfast,
     meanLunch: meanLunch,
     meanDinner: meanDinner,
