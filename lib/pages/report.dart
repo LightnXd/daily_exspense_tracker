@@ -87,7 +87,7 @@ class _ReportPageState extends State<ReportPage> {
     return SizedBox(
       width: double.infinity,
       child: DataTable(
-        columnSpacing: 5,
+        columnSpacing: 8,
         dataRowMinHeight: 40,
         dataRowMaxHeight: 40,
         headingRowHeight: 36,
@@ -179,7 +179,7 @@ class _ReportPageState extends State<ReportPage> {
 
     final totalOtherPurchases = otherItems.fold<double>(0, (s, p) => s + p.price);
     final totalAll = totalFoodDrink + totalOtherPurchases;
-    final grandTotal = totalAll + report.totalDailyFood;
+    final grandTotal = totalAll;
 
     // Per-type totals for other items
     final typeMap = <String, double>{};
@@ -231,7 +231,7 @@ class _ReportPageState extends State<ReportPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('Report')),
       body: Padding(
-        padding: const EdgeInsets.all(4.0),
+        padding: const EdgeInsets.all(12.0),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             DropdownButton<int>(
