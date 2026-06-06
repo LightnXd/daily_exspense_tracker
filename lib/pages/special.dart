@@ -202,11 +202,11 @@ class _SpecialPageState extends State<SpecialPage> {
                     TextFormField(
                       controller: priceCtrl,
                       decoration: const InputDecoration(labelText: 'Price'),
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
                       validator: (v) {
                         if (v == null || v.trim().isEmpty) return 'Required';
-                        if (int.tryParse(v) == null) return 'Invalid number';
+                        if (double.tryParse(v.replaceAll(',', '')) == null) return 'Invalid number';
                         return null;
                       },
                     ),
@@ -244,7 +244,7 @@ class _SpecialPageState extends State<SpecialPage> {
                     color: (type == 'sanitation' && colorCtrl.text.trim().isNotEmpty)
                         ? colorCtrl.text.trim()
                         : null,
-                    price: int.parse(priceCtrl.text.trim()),
+                    price: double.parse(priceCtrl.text.trim().replaceAll(',', '')),
                     date: newDate,
                     desc: descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
                   );
@@ -437,7 +437,7 @@ class _SpecialPageState extends State<SpecialPage> {
                       ),
                       validator: (v) {
                         if (v == null || v.trim().isEmpty) return 'Required';
-                        if (int.tryParse(v) == null) return 'Invalid number';
+                        if (double.tryParse(v.replaceAll(',', '')) == null) return 'Invalid number';
                         return null;
                       },
                     ),
@@ -487,45 +487,6 @@ class _SpecialPageState extends State<SpecialPage> {
             ),
           ),
           const Divider(height: 24),
-          // ── Month/Year filter ─────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-            child: Row(
-              children: [
-                DropdownButton<int>(
-                  value: _month,
-                  items: List.generate(
-                    12,
-                    (i) => DropdownMenuItem(
-                      value: i + 1,
-                      child: Text(DateFormat.MMMM().format(DateTime(0, i + 1))),
-                    ),
-                  ),
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setState(() => _month = v);
-                    _loadList();
-                  },
-                ),
-                const SizedBox(width: 12),
-                DropdownButton<int>(
-                  value: _year,
-                  items: List.generate(
-                    5,
-                    (i) => DropdownMenuItem(
-                      value: DateTime.now().year - 2 + i,
-                      child: Text('${DateTime.now().year - 2 + i}'),
-                    ),
-                  ),
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setState(() => _year = v);
-                    _loadList();
-                  },
-                ),
-              ],
-            ),
-          ),
           // ── List ──────────────────────────────────────────────────────
           Expanded(
             child: _purchases.isEmpty
