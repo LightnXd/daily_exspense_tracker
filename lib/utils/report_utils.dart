@@ -32,6 +32,7 @@ class MonthlyReport {
     required this.sumDinner,
     required this.sumSnack,
     required this.totalLeft,
+    required this.totalDailyFood,
     this.meanBreakfast,
     this.meanLunch,
     this.meanDinner,
