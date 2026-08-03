@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart';
@@ -175,9 +176,7 @@ class DBHelper {
     return result;
   }
 
-  /// Export entries and special purchases within [from]..[to] (inclusive) as CSV.
-  /// Returns the CSV content as a string.
-  Future<String> exportToCsvString(DateTime from, DateTime to) async {
+  Future<List<DailyEntry>> _entriesForRange(DateTime from, DateTime to) async {
     final fromStr = from.toIso8601String().split('T').first;
     final toStr = to.toIso8601String().split('T').first;
     final db = await _open();
@@ -186,13 +185,39 @@ class DBHelper {
       'SELECT * FROM daily_entries WHERE date >= ? AND date <= ? ORDER BY date ASC',
       [fromStr, toStr],
     );
-    final entries = entryRes.map((m) => DailyEntry.fromMap(m)).toList();
+    return entryRes.map((m) => DailyEntry.fromMap(m)).toList();
+  }
+
+  Future<List<GrandPurchase>> _purchasesForRange(DateTime from, DateTime to) async {
+    final fromStr = from.toIso8601String().split('T').first;
+    final toStr = to.toIso8601String().split('T').first;
+    final db = await _open();
 
     final purchaseRes = await db.rawQuery(
       'SELECT * FROM grand_purchase WHERE date >= ? AND date <= ? ORDER BY date ASC',
       [fromStr, toStr],
     );
-    final purchases = purchaseRes.map((m) => GrandPurchase.fromMap(m)).toList();
+    return purchaseRes.map((m) => GrandPurchase.fromMap(m)).toList();
+  }
+
+  /// Export entries and special purchases within [from]..[to] (inclusive) as JSON.
+  Future<String> exportToJsonString(DateTime from, DateTime to) async {
+    final entries = await _entriesForRange(from, to);
+    final purchases = await _purchasesForRange(from, to);
+
+    final payload = {
+      'entries': entries.map((e) => e.toJson()).toList(),
+      'purchases': purchases.map((p) => p.toJson()).toList(),
+    };
+
+    return jsonEncode(payload);
+  }
+
+  /// Export entries and special purchases within [from]..[to] (inclusive) as CSV.
+  /// Returns the CSV content as a string.
+  Future<String> exportToCsvString(DateTime from, DateTime to) async {
+    final entries = await _entriesForRange(from, to);
+    final purchases = await _purchasesForRange(from, to);
 
     final buf = StringBuffer();
 
@@ -224,6 +249,45 @@ class DBHelper {
     }
 
     return buf.toString();
+  }
+
+  /// Import entries and special purchases from a JSON string.
+  Future<void> importFromJsonString(String jsonContent) async {
+    final decoded = jsonDecode(jsonContent);
+    if (decoded is! Map) {
+      throw FormatException('JSON payload must be an object with entries and purchases');
+    }
+
+    final payload = Map<String, dynamic>.from(decoded as Map<dynamic, dynamic>);
+    final entries = payload['entries'];
+    final purchases = payload['purchases'];
+
+    if (entries is List) {
+      for (final item in entries) {
+        if (item is Map) {
+          final entry = DailyEntry.fromJson(Map<String, dynamic>.from(item as Map<dynamic, dynamic>));
+          await upsertEntry(entry);
+        }
+      }
+    }
+
+    final existingPurchases = await getAllGrandPurchases();
+    if (purchases is List) {
+      for (final item in purchases) {
+        if (item is Map) {
+          final purchase = GrandPurchase.fromJson(Map<String, dynamic>.from(item as Map<dynamic, dynamic>));
+          final dateStr = purchase.date.toIso8601String().split('T').first;
+          final isDuplicate = existingPurchases.any((e) =>
+              e.type == purchase.type &&
+              e.name == purchase.name &&
+              e.date.toIso8601String().split('T').first == dateStr);
+          if (!isDuplicate) {
+            await insertGrandPurchase(purchase);
+            existingPurchases.add(purchase);
+          }
+        }
+      }
+    }
   }
 
   /// Import entries and special purchases from a CSV string.

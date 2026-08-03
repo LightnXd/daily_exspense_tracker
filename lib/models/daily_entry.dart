@@ -36,4 +36,8 @@ class DailyEntry {
       'snack': snack,
     };
   }
+
+  Map<String, dynamic> toJson() => toMap();
+
+  factory DailyEntry.fromJson(Map<String, dynamic> json) => DailyEntry.fromMap(json);
 }

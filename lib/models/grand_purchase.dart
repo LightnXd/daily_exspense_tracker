@@ -47,4 +47,8 @@ class GrandPurchase {
     if (id != null) map['id'] = id;
     return map;
   }
+
+  Map<String, dynamic> toJson() => toMap();
+
+  factory GrandPurchase.fromJson(Map<String, dynamic> json) => GrandPurchase.fromMap(json);
 }

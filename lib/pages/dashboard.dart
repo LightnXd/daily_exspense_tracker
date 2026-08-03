@@ -181,7 +181,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             ListTile(
               leading: const Icon(Icons.upload_file),
-              title: const Text('Export data (CSV)'),
+              title: const Text('Export data (JSON)'),
               onTap: () async {
                 Navigator.pop(context);
                 await _exportData();
@@ -189,7 +189,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             ListTile(
               leading: const Icon(Icons.download),
-              title: const Text('Import data (CSV)'),
+              title: const Text('Import data (JSON)'),
               onTap: () async {
                 Navigator.pop(context);
                 await _importData();
@@ -223,22 +223,22 @@ class _DashboardPageState extends State<DashboardPage> {
       );
       if (range == null || !mounted) return;
 
-      final csvContent = await DBHelper().exportToCsvString(range.start, range.end);
+      final jsonContent = await DBHelper().exportToJsonString(range.start, range.end);
       final from = DateFormat('yyyy-MM-dd').format(range.start);
       final to = DateFormat('yyyy-MM-dd').format(range.end);
-      final fileName = 'expense_export_${from}_to_$to.csv';
+      final fileName = 'expense_export_${from}_to_$to.json';
 
       String? savePath;
       try {
         savePath = await FilePicker.platform.saveFile(
           fileName: fileName,
           type: FileType.custom,
-          allowedExtensions: ['csv'],
+          allowedExtensions: ['json'],
         );
       } catch (_) {}
 
       if (savePath != null) {
-        await File(savePath).writeAsString(csvContent);
+        await File(savePath).writeAsString(jsonContent);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -249,14 +249,14 @@ class _DashboardPageState extends State<DashboardPage> {
         }
       } else {
         final dir = await getApplicationDocumentsDirectory();
-        final file = File('\${dir.path}/\$fileName');
-        await file.writeAsString(csvContent);
+        final file = File('${dir.path}/$fileName');
+        await file.writeAsString(jsonContent);
         if (mounted) {
           await showDialog<void>(
             context: context,
             builder: (_) => AlertDialog(
               title: const Text('Export complete'),
-              content: Text('Saved to:\n\${file.path}'),
+              content: Text('Saved to:\n${file.path}'),
               actions: [
                 TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
                 TextButton(
@@ -289,12 +289,12 @@ class _DashboardPageState extends State<DashboardPage> {
     try {
       final res = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv'],
+        allowedExtensions: ['json'],
       );
       if (res == null || res.files.isEmpty) return;
       final file = File(res.files.single.path!);
       final content = await file.readAsString();
-      await DBHelper().importFromCsvString(content);
+      await DBHelper().importFromJsonString(content);
       await _loadFor(_selected);
       if (mounted) {
         await showDialog<void>(
