@@ -1,6 +1,7 @@
 class GrandPurchase {
   final int? id;
-  final String type;
+  final int typeId;
+  final String? typeName;
   final String name;
   final String? color;
   final double price;
@@ -9,7 +10,8 @@ class GrandPurchase {
 
   GrandPurchase({
     this.id,
-    required this.type,
+    required this.typeId,
+    this.typeName,
     required this.name,
     this.color,
     required this.price,
@@ -17,16 +19,14 @@ class GrandPurchase {
     this.desc,
   });
 
-  /// Returns "name - color" for sanitation when color is set, otherwise just "name".
-  String get displayName =>
-      (type == 'sanitation' && color != null && color!.isNotEmpty)
-          ? '$name - $color'
-          : name;
+  /// Category name from [typeName] (loaded via JOIN). Empty if not joined yet.
+  String get type => typeName ?? '';
 
   factory GrandPurchase.fromMap(Map<String, dynamic> m) {
     return GrandPurchase(
       id: m['id'] as int?,
-      type: m['type'] as String,
+      typeId: m['type_id'] as int,
+      typeName: m['type_name'] as String?,
       name: m['name'] as String,
       color: m['color'] as String?,
       price: (m['price'] as num).toDouble(),
@@ -37,7 +37,7 @@ class GrandPurchase {
 
   Map<String, dynamic> toMap() {
     final map = <String, dynamic>{
-      'type': type,
+      'type_id': typeId,
       'name': name,
       'color': color,
       'price': price,
@@ -48,7 +48,26 @@ class GrandPurchase {
     return map;
   }
 
-  Map<String, dynamic> toJson() => toMap();
+  Map<String, dynamic> toJson() {
+    final json = toMap();
+    if (type.isNotEmpty) json['type'] = type;
+    return json;
+  }
 
-  factory GrandPurchase.fromJson(Map<String, dynamic> json) => GrandPurchase.fromMap(json);
+  factory GrandPurchase.fromJson(Map<String, dynamic> json) {
+    final typeId = json['type_id'] as int?;
+    if (typeId != null) {
+      return GrandPurchase.fromMap(json);
+    }
+    return GrandPurchase(
+      id: json['id'] as int?,
+      typeId: 0,
+      typeName: json['type'] as String?,
+      name: json['name'] as String,
+      color: json['color'] as String?,
+      price: (json['price'] as num).toDouble(),
+      date: DateTime.parse(json['date'] as String),
+      desc: json['desc'] as String?,
+    );
+  }
 }

@@ -1,3 +1,5 @@
+import '../utils/date_utils.dart';
+
 class DailyEntry {
   final DateTime date;
   final double? breakfast;
@@ -19,7 +21,7 @@ class DailyEntry {
 
   factory DailyEntry.fromMap(Map<String, dynamic> m) {
     return DailyEntry(
-      date: DateTime.parse(m['date'] as String),
+      date: DateUtilsLocal.parseDate(m['date'] as String),
       breakfast: m['breakfast'] == null ? null : (m['breakfast'] as num).toDouble(),
       lunch: m['lunch'] == null ? null : (m['lunch'] as num).toDouble(),
       dinner: m['dinner'] == null ? null : (m['dinner'] as num).toDouble(),
@@ -29,7 +31,7 @@ class DailyEntry {
 
   Map<String, dynamic> toMap() {
     return {
-      'date': date.toIso8601String(),
+      'date': DateUtilsLocal.dateToStorageKey(date),
       'breakfast': breakfast,
       'lunch': lunch,
       'dinner': dinner,
@@ -37,7 +39,15 @@ class DailyEntry {
     };
   }
 
-  Map<String, dynamic> toJson() => toMap();
+  Map<String, dynamic> toJson() {
+    return {
+      'date': DateUtilsLocal.dateToApiString(date),
+      'breakfast': breakfast,
+      'lunch': lunch,
+      'dinner': dinner,
+      'snack': snack,
+    };
+  }
 
   factory DailyEntry.fromJson(Map<String, dynamic> json) => DailyEntry.fromMap(json);
 }

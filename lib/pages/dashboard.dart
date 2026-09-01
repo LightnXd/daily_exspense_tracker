@@ -1,11 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../models/daily_entry.dart';
 import '../services/db_helper.dart';
@@ -210,6 +209,40 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Future<String?> _promptExportFileName(String defaultName) async {
+    final nameCtrl = TextEditingController(text: defaultName);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Export file'),
+        content: TextField(
+          controller: nameCtrl,
+          decoration: const InputDecoration(
+            labelText: 'File name',
+            hintText: 'expense_export.json',
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              var name = nameCtrl.text.trim();
+              if (name.isEmpty) return;
+              if (!name.toLowerCase().endsWith('.json')) {
+                name = '$name.json';
+              }
+              Navigator.pop(ctx, name);
+            },
+            child: const Text('Choose location'),
+          ),
+        ],
+      ),
+    );
+    nameCtrl.dispose();
+    return result;
+  }
+
   Future<void> _exportData() async {
     try {
       final range = await showDateRangePicker(
@@ -223,53 +256,60 @@ class _DashboardPageState extends State<DashboardPage> {
       );
       if (range == null || !mounted) return;
 
-      final jsonContent = await DBHelper().exportToJsonString(range.start, range.end);
+      final jsonContent =
+          await DBHelper().exportToJsonString(range.start, range.end);
       final from = DateFormat('yyyy-MM-dd').format(range.start);
       final to = DateFormat('yyyy-MM-dd').format(range.end);
-      final fileName = 'expense_export_${from}_to_$to.json';
+      final defaultFileName = 'expense_export_${from}_to_$to.json';
+
+      final fileName = await _promptExportFileName(defaultFileName);
+      if (fileName == null || !mounted) return;
+
+      final bytes = Uint8List.fromList(utf8.encode(jsonContent));
 
       String? savePath;
       try {
         savePath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save export file',
           fileName: fileName,
           type: FileType.custom,
           allowedExtensions: ['json'],
+          bytes: bytes,
         );
-      } catch (_) {}
-
-      if (savePath != null) {
-        await File(savePath).writeAsString(jsonContent);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Exported to $savePath'),
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      } else {
-        final dir = await getApplicationDocumentsDirectory();
-        final file = File('${dir.path}/$fileName');
-        await file.writeAsString(jsonContent);
+      } on PlatformException catch (e) {
         if (mounted) {
           await showDialog<void>(
             context: context,
             builder: (_) => AlertDialog(
-              title: const Text('Export complete'),
-              content: Text('Saved to:\n${file.path}'),
+              title: const Text('Export failed'),
+              content: Text(e.message ?? e.toString()),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
                 TextButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await Share.shareXFiles([XFile(file.path)], text: 'Expense export');
-                  },
-                  child: const Text('Share'),
-                ),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('OK')),
               ],
             ),
           );
         }
+        return;
+      }
+
+      if (savePath == null) return;
+
+      // Desktop platforms return a path without writing when bytes are omitted;
+      // ensure the file exists when the plugin did not write it.
+      final file = File(savePath);
+      if (!await file.exists()) {
+        await file.writeAsString(jsonContent);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Exported to $savePath'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

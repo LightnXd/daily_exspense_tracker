@@ -2,28 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/grand_purchase.dart';
+import '../models/purchase_type.dart';
 import '../services/db_helper.dart';
-
-const List<String> kPurchaseTypes = [
-  'food&drink',
-  'sanitation',
-  'transport',
-  'event',
-  'furniture',
-  'games',
-  'extra',
-];
+import '../utils/purchase_display.dart';
 
 class SpecialPage extends StatefulWidget {
   const SpecialPage({Key? key}) : super(key: key);
 
   @override
-  State<SpecialPage> createState() => _SpecialPageState();
+  State<SpecialPage> createState() => SpecialPageState();
 }
 
-class _SpecialPageState extends State<SpecialPage> {
+class SpecialPageState extends State<SpecialPage> {
   final _formKey = GlobalKey<FormState>();
-  String _type = kPurchaseTypes.first;
+  List<PurchaseType> _purchaseTypes = [];
+  String? _type;
   final _nameCtrl = TextEditingController();
   final _colorCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
@@ -35,7 +28,7 @@ class _SpecialPageState extends State<SpecialPage> {
   int _filterMonth = DateTime.now().month;
 
   String _sortField = 'date';
-  bool _sortAscending = false; // default date desc
+  bool _sortAscending = false;
 
   List<GrandPurchase> _purchases = [];
   final _searchCtrl = TextEditingController();
@@ -43,10 +36,47 @@ class _SpecialPageState extends State<SpecialPage> {
   final _fmt = NumberFormat('#,##0.##', 'en_US');
   final _dateFmt = DateFormat('dd/MM/yyyy');
 
+  PurchaseType? get _selectedType {
+    if (_type == null) return null;
+    for (final t in _purchaseTypes) {
+      if (t.name == _type) return t;
+    }
+    return null;
+  }
+
+  Map<int, PurchaseType> get _typeById {
+    return {
+      for (final t in _purchaseTypes)
+        if (t.id != null) t.id!: t,
+    };
+  }
+
+  Future<void> reload() async {
+    await _loadTypes();
+    await _loadList();
+  }
+
   @override
   void initState() {
     super.initState();
-    _loadList();
+    _init();
+  }
+
+  Future<void> _init() async {
+    await _loadTypes();
+    await _loadList();
+  }
+
+  Future<void> _loadTypes() async {
+    final types = await DBHelper().getAllPurchaseTypes();
+    if (mounted) {
+      setState(() {
+        _purchaseTypes = types;
+        if (_type == null || !types.any((t) => t.name == _type)) {
+          _type = types.isNotEmpty ? types.first.name : null;
+        }
+      });
+    }
   }
 
   @override
@@ -74,7 +104,8 @@ class _SpecialPageState extends State<SpecialPage> {
   }
 
   Future<void> _loadList() async {
-    final list = await DBHelper().getGrandPurchasesForMonth(_filterYear, _filterMonth);
+    final list =
+        await DBHelper().getGrandPurchasesForMonth(_filterYear, _filterMonth);
     if (mounted) {
       setState(() {
         _purchases = list;
@@ -89,7 +120,7 @@ class _SpecialPageState extends State<SpecialPage> {
         _sortAscending = !_sortAscending;
       } else {
         _sortField = field;
-        _sortAscending = false; // start desc on new field
+        _sortAscending = false;
       }
       _sortPurchases();
     });
@@ -106,12 +137,16 @@ class _SpecialPageState extends State<SpecialPage> {
   }
 
   Future<void> _save() async {
+    final typeConfig = _selectedType;
+    if (typeConfig?.id == null) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
+
     final purchase = GrandPurchase(
-      type: _type,
+      typeId: typeConfig!.id!,
       name: _nameCtrl.text.trim(),
-      color: (_type == 'sanitation' && _colorCtrl.text.trim().isNotEmpty)
+      color: (typeConfig.useColor == true &&
+              _colorCtrl.text.trim().isNotEmpty)
           ? _colorCtrl.text.trim()
           : null,
       price: double.parse(_priceCtrl.text.replaceAll(',', '')),
@@ -125,7 +160,7 @@ class _SpecialPageState extends State<SpecialPage> {
     _priceCtrl.clear();
     _descCtrl.clear();
     setState(() {
-      _type = kPurchaseTypes.first;
+      _type = _purchaseTypes.isNotEmpty ? _purchaseTypes.first.name : null;
       _date = DateTime.now();
       _saving = false;
     });
@@ -139,14 +174,19 @@ class _SpecialPageState extends State<SpecialPage> {
 
   Future<void> _delete(GrandPurchase p) async {
     if (p.id == null) return;
+    final typeConfig = _typeById[p.typeId];
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete'),
-        content: Text('Delete "${p.displayName}"?'),
+        content: Text('Delete "${purchaseDisplayName(p, typeConfig)}"?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete')),
         ],
       ),
     );
@@ -160,7 +200,7 @@ class _SpecialPageState extends State<SpecialPage> {
     if (p.id == null) return;
 
     final formKey = GlobalKey<FormState>();
-    String type = p.type;
+    int? typeId = p.typeId;
     final nameCtrl = TextEditingController(text: p.name);
     final colorCtrl = TextEditingController(text: p.color ?? '');
     final priceCtrl = TextEditingController(text: p.price.toString());
@@ -171,7 +211,8 @@ class _SpecialPageState extends State<SpecialPage> {
       context: context,
       builder: (ctx) {
         return StatefulBuilder(builder: (ctx, setState) {
-          final isSanitation = type == 'sanitation';
+          PurchaseType? typeConfig = _typeById[typeId];
+          final showColor = typeConfig?.useColor == true;
 
           return AlertDialog(
             title: const Text('Edit Purchase'),
@@ -182,22 +223,25 @@ class _SpecialPageState extends State<SpecialPage> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    DropdownButtonFormField<String>(
-                      value: type,
-                      items: kPurchaseTypes
-                          .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                    DropdownButtonFormField<int>(
+                      value: typeId,
+                      items: _purchaseTypes
+                          .where((t) => t.id != null)
+                          .map((t) => DropdownMenuItem(
+                              value: t.id, child: Text(t.name)))
                           .toList(),
                       onChanged: (v) {
-                        if (v != null) setState(() => type = v);
+                        if (v != null) setState(() => typeId = v);
                       },
                       decoration: const InputDecoration(labelText: 'Type'),
                     ),
                     TextFormField(
                       controller: nameCtrl,
                       decoration: const InputDecoration(labelText: 'Name'),
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      validator: (v) =>
+                          (v == null || v.trim().isEmpty) ? 'Required' : null,
                     ),
-                    if (isSanitation)
+                    if (showColor)
                       TextFormField(
                         controller: colorCtrl,
                         decoration: const InputDecoration(labelText: 'Color'),
@@ -205,11 +249,16 @@ class _SpecialPageState extends State<SpecialPage> {
                     TextFormField(
                       controller: priceCtrl,
                       decoration: const InputDecoration(labelText: 'Price'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))
+                      ],
                       validator: (v) {
                         if (v == null || v.trim().isEmpty) return 'Required';
-                        if (double.tryParse(v.replaceAll(',', '')) == null) return 'Invalid number';
+                        if (double.tryParse(v.replaceAll(',', '')) == null) {
+                          return 'Invalid number';
+                        }
                         return null;
                       },
                     ),
@@ -229,27 +278,38 @@ class _SpecialPageState extends State<SpecialPage> {
                     TextFormField(
                       controller: descCtrl,
                       maxLines: 2,
-                      decoration: const InputDecoration(labelText: 'Desc (optional)'),
+                      decoration:
+                          const InputDecoration(labelText: 'Desc (optional)'),
                     ),
                   ],
                 ),
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel')),
               TextButton(
                 onPressed: () async {
                   if (!formKey.currentState!.validate()) return;
+                  if (typeId == null) return;
+
+                  final editTypeConfig = _typeById[typeId];
+
                   final updated = GrandPurchase(
                     id: p.id,
-                    type: type,
+                    typeId: typeId!,
                     name: nameCtrl.text.trim(),
-                    color: (type == 'sanitation' && colorCtrl.text.trim().isNotEmpty)
+                    color: (editTypeConfig?.useColor == true &&
+                            colorCtrl.text.trim().isNotEmpty)
                         ? colorCtrl.text.trim()
                         : null,
-                    price: double.parse(priceCtrl.text.trim().replaceAll(',', '')),
+                    price: double.parse(
+                        priceCtrl.text.trim().replaceAll(',', '')),
                     date: newDate,
-                    desc: descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
+                    desc: descCtrl.text.trim().isEmpty
+                        ? null
+                        : descCtrl.text.trim(),
                   );
                   await DBHelper().updateGrandPurchase(updated);
                   Navigator.pop(ctx);
@@ -272,7 +332,8 @@ class _SpecialPageState extends State<SpecialPage> {
         children: [
           SizedBox(
             width: 70,
-            child: Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
+            child:
+                Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
           ),
           Expanded(child: input),
         ],
@@ -282,7 +343,7 @@ class _SpecialPageState extends State<SpecialPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isSanitation = _type == 'sanitation';
+    final showColor = _selectedType?.useColor == true;
 
     return Scaffold(
       appBar: AppBar(
@@ -292,11 +353,7 @@ class _SpecialPageState extends State<SpecialPage> {
             icon: const Icon(Icons.sort),
             onSelected: _onSortSelected,
             itemBuilder: (ctx) {
-              final entries = [
-                'date',
-                'price',
-                'alphabet',
-              ];
+              final entries = ['date', 'price', 'alphabet'];
               return entries.map((key) {
                 final label = key == 'date'
                     ? 'Date'
@@ -327,7 +384,6 @@ class _SpecialPageState extends State<SpecialPage> {
       ),
       body: CustomScrollView(
         slivers: [
-          // ── Filter row ────────────────────────────────────────────────
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -339,7 +395,8 @@ class _SpecialPageState extends State<SpecialPage> {
                       12,
                       (i) => DropdownMenuItem(
                         value: i + 1,
-                        child: Text(DateFormat.MMMM().format(DateTime(0, i + 1))),
+                        child: Text(
+                            DateFormat.MMMM().format(DateTime(0, i + 1))),
                       ),
                     ),
                     onChanged: (v) {
@@ -372,130 +429,147 @@ class _SpecialPageState extends State<SpecialPage> {
             ),
           ),
           const SliverToBoxAdapter(child: Divider(height: 1)),
-          // ── Form ──────────────────────────────────────────────────────
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  children: [
-                    // Type
-                    _row(
-                      'Type',
-                      DropdownButtonFormField<String>(
-                        value: _type,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          border: OutlineInputBorder(),
-                        ),
-                        items: kPurchaseTypes
-                            .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                            .toList(),
-                        onChanged: (v) {
-                          if (v != null) setState(() => _type = v);
-                        },
+              child: _purchaseTypes.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Text(
+                        'No categories configured. Add categories in Settings.',
+                        style: TextStyle(color: Colors.grey),
                       ),
-                    ),
-                    // Name
-                    _row(
-                      'Name',
-                      TextFormField(
-                        controller: _nameCtrl,
-                        decoration: const InputDecoration(
-                          hintText: 'Insert name',
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) =>
-                            (v == null || v.trim().isEmpty) ? 'Required' : null,
-                      ),
-                    ),
-                    // Color (sanitation only)
-                    if (isSanitation)
-                      _row(
-                        'Color',
-                        TextFormField(
-                          controller: _colorCtrl,
-                          decoration: const InputDecoration(
-                            hintText: 'e.g. blue, red',
-                            isDense: true,
-                            contentPadding:
-                                EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                            border: OutlineInputBorder(),
+                    )
+                  : Form(
+                      key: _formKey,
+                      child: Column(
+                        children: [
+                          _row(
+                            'Type',
+                            DropdownButtonFormField<String>(
+                              value: _type,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                                border: OutlineInputBorder(),
+                              ),
+                              items: _purchaseTypes
+                                  .map((t) => DropdownMenuItem(
+                                      value: t.name, child: Text(t.name)))
+                                  .toList(),
+                              onChanged: (v) {
+                                if (v != null) setState(() => _type = v);
+                              },
+                            ),
                           ),
-                        ),
-                      ),
-                    // Price
-                    _row(
-                      'Price',
-                      TextFormField(
-                        controller: _priceCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
-                        decoration: const InputDecoration(
-                          hintText: '0',
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) return 'Required';
-                          if (double.tryParse(v.replaceAll(',', '')) == null) return 'Invalid number';
-                          return null;
-                        },
+                          _row(
+                            'Name',
+                            TextFormField(
+                              controller: _nameCtrl,
+                              decoration: const InputDecoration(
+                                hintText: 'Insert name',
+                                isDense: true,
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                                border: OutlineInputBorder(),
+                              ),
+                              validator: (v) => (v == null || v.trim().isEmpty)
+                                  ? 'Required'
+                                  : null,
+                            ),
+                          ),
+                          if (showColor)
+                            _row(
+                              'Color',
+                              TextFormField(
+                                controller: _colorCtrl,
+                                decoration: const InputDecoration(
+                                  hintText: 'e.g. blue, red',
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 8),
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                            ),
+                          _row(
+                            'Price',
+                            TextFormField(
+                              controller: _priceCtrl,
+                              keyboardType: const TextInputType.numberWithOptions(
+                                  decimal: true),
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                    RegExp(r'[\d.]'))
+                              ],
+                              decoration: const InputDecoration(
+                                hintText: '0',
+                                isDense: true,
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                                border: OutlineInputBorder(),
+                              ),
+                              validator: (v) {
+                                if (v == null || v.trim().isEmpty) {
+                                  return 'Required';
+                                }
+                                if (double.tryParse(v.replaceAll(',', '')) ==
+                                    null) {
+                                  return 'Invalid number';
+                                }
+                                return null;
+                              },
+                            ),
+                          ),
+                          _row(
+                            'Date',
+                            OutlinedButton(
+                              onPressed: _pickDate,
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                                alignment: Alignment.centerLeft,
+                              ),
+                              child: Text(_dateFmt.format(_date)),
+                            ),
+                          ),
+                          _row(
+                            'Desc',
+                            TextFormField(
+                              controller: _descCtrl,
+                              maxLines: 2,
+                              decoration: const InputDecoration(
+                                hintText: 'Optional',
+                                isDense: true,
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: _saving ? null : _save,
+                              child: _saving
+                                  ? const SizedBox(
+                                      height: 18,
+                                      width: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : const Text('Save'),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    // Date
-                    _row(
-                      'Date',
-                      OutlinedButton(
-                        onPressed: _pickDate,
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          alignment: Alignment.centerLeft,
-                        ),
-                        child: Text(_dateFmt.format(_date)),
-                      ),
-                    ),
-                    // Desc
-                    _row(
-                      'Desc',
-                      TextFormField(
-                        controller: _descCtrl,
-                        maxLines: 2,
-                        decoration: const InputDecoration(
-                          hintText: 'Optional',
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _saving ? null : _save,
-                        child: _saving
-                            ? const SizedBox(
-                                height: 18,
-                                width: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text('Save'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
           ),
           const SliverToBoxAdapter(child: Divider(height: 24)),
-          // ── Search bar ────────────────────────────────────────────────
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -518,11 +592,11 @@ class _SpecialPageState extends State<SpecialPage> {
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   border: const OutlineInputBorder(),
                 ),
-                onChanged: (v) => setState(() => _searchQuery = v.trim().toLowerCase()),
+                onChanged: (v) =>
+                    setState(() => _searchQuery = v.trim().toLowerCase()),
               ),
             ),
           ),
-          // ── List ──────────────────────────────────────────────────────
           Builder(builder: (context) {
             final filtered = _purchases
                 .where((p) =>
@@ -544,12 +618,13 @@ class _SpecialPageState extends State<SpecialPage> {
                 (ctx, i) {
                   if (i.isOdd) return const Divider(height: 1);
                   final p = filtered[i ~/ 2];
+                  final typeConfig = _typeById[p.typeId];
                   return ListTile(
                     dense: true,
                     contentPadding:
                         const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                     title: Text(
-                      '${p.displayName}  •  ${_fmt.format(p.price)}',
+                      '${purchaseDisplayName(p, typeConfig)}  •  ${_fmt.format(p.price)}',
                       style: const TextStyle(fontSize: 14),
                     ),
                     subtitle: Column(

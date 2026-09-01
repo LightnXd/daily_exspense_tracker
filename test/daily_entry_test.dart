@@ -24,10 +24,11 @@ void main() {
     expect(e2.date.toIso8601String().split('T').first, '2026-01-03');
   });
 
-  test('grand purchase json roundtrip preserves important fields', () {
+  test('grand purchase json roundtrip preserves important fields', () async {
     final p = GrandPurchase(
       id: 7,
-      type: 'sanitation',
+      typeId: 3,
+      typeName: 'sanitation',
       name: 'Cleaning',
       color: 'blue',
       price: 42.5,
@@ -38,6 +39,7 @@ void main() {
     final payload = p.toJson();
     final decoded = GrandPurchase.fromJson(payload);
 
+    expect(decoded.typeId, p.typeId);
     expect(decoded.type, p.type);
     expect(decoded.name, p.name);
     expect(decoded.color, p.color);

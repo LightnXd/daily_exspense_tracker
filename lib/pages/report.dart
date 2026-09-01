@@ -2,24 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/daily_entry.dart';
 import '../models/grand_purchase.dart';
+import '../models/purchase_type.dart';
 import '../services/db_helper.dart';
 import '../services/prefs.dart';
+import '../utils/purchase_display.dart';
 import '../utils/report_utils.dart';
 
 class ReportPage extends StatefulWidget {
   const ReportPage({Key? key}) : super(key: key);
 
   @override
-  State<ReportPage> createState() => _ReportPageState();
+  State<ReportPage> createState() => ReportPageState();
 }
 
-class _ReportPageState extends State<ReportPage> {
+class ReportPageState extends State<ReportPage> {
   int _year = DateTime.now().year;
   int _month = DateTime.now().month;
   final _fmt = NumberFormat('#,##0.##', 'en_US');
   final _dateFmt = DateFormat('dd/MM');
   List<DailyEntry> _rows = [];
   List<GrandPurchase> _specialRows = [];
+  List<PurchaseType> _purchaseTypes = [];
+  final Set<String> _expandedTypes = {};
 
   @override
   void initState() {
@@ -34,28 +38,42 @@ class _ReportPageState extends State<ReportPage> {
     super.dispose();
   }
 
+  Future<void> reload() => _load();
+
   Future<void> _load() async {
     final entries = await DBHelper().getEntriesForMonth(_year, _month);
     final special = await DBHelper().getGrandPurchasesForMonth(_year, _month);
+    final types = await DBHelper().getAllPurchaseTypes();
     setState(() {
       _rows = entries;
       _specialRows = special;
+      _purchaseTypes = types;
     });
+  }
+
+  Map<String, PurchaseType> get _typeByName {
+    return {for (final t in _purchaseTypes) t.name: t};
   }
 
   Widget _buildTable() {
     final budget = PrefsService.dailyBudget.value;
     final report = computeMonthlyReport(_year, _month, _rows, budget);
 
-    // Show only days that have any spending. If none, show only header + Mean/Total with '-'.
-    final daysWithSpending = report.days.where((d) => d.breakfast != null || d.lunch != null || d.dinner != null || d.snack != null).toList();
+    final daysWithSpending = report.days
+        .where((d) =>
+            d.breakfast != null ||
+            d.lunch != null ||
+            d.dinner != null ||
+            d.snack != null)
+        .toList();
     final hasSpending = daysWithSpending.isNotEmpty;
 
     final rows = hasSpending
         ? daysWithSpending.map((d) {
             return DataRow(cells: [
               DataCell(Text('${d.day}')),
-              DataCell(Text(d.breakfast == null ? '-' : _fmt.format(d.breakfast))),
+              DataCell(Text(
+                  d.breakfast == null ? '-' : _fmt.format(d.breakfast))),
               DataCell(Text(d.lunch == null ? '-' : _fmt.format(d.lunch))),
               DataCell(Text(d.dinner == null ? '-' : _fmt.format(d.dinner))),
               DataCell(Text(d.snack == null ? '-' : _fmt.format(d.snack))),
@@ -66,11 +84,17 @@ class _ReportPageState extends State<ReportPage> {
 
     final meanRow = DataRow(cells: [
       const DataCell(Text('%')),
-      DataCell(Text(report.meanBreakfast == null ? '-' : _fmt.format(report.meanBreakfast))),
-      DataCell(Text(report.meanLunch == null ? '-' : _fmt.format(report.meanLunch))),
-      DataCell(Text(report.meanDinner == null ? '-' : _fmt.format(report.meanDinner))),
-      DataCell(Text(report.meanSnack == null ? '-' : _fmt.format(report.meanSnack))),
-      DataCell(Text(report.meanLeft == null ? '-' : _fmt.format(report.meanLeft))),
+      DataCell(Text(report.meanBreakfast == null
+          ? '-'
+          : _fmt.format(report.meanBreakfast))),
+      DataCell(Text(
+          report.meanLunch == null ? '-' : _fmt.format(report.meanLunch))),
+      DataCell(Text(
+          report.meanDinner == null ? '-' : _fmt.format(report.meanDinner))),
+      DataCell(Text(
+          report.meanSnack == null ? '-' : _fmt.format(report.meanSnack))),
+      DataCell(Text(
+          report.meanLeft == null ? '-' : _fmt.format(report.meanLeft))),
     ]);
 
     final totalRow = DataRow(cells: [
@@ -104,8 +128,6 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  // ── helpers ────────────────────────────────────────────────────────────────
-
   Widget _sectionTitle(String text) => Padding(
         padding: const EdgeInsets.only(top: 20, bottom: 6),
         child: Text(text,
@@ -121,17 +143,14 @@ class _ReportPageState extends State<ReportPage> {
             Text(
               _fmt.format(value),
               style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: color),
+                  fontSize: 13, fontWeight: FontWeight.w600, color: color),
             ),
           ],
         ),
       );
 
-  /// Builds a simple purchase row: [displayName] — [price] — [date dd/MM]
-  /// with an optional italic desc line underneath.
   Widget _purchaseRow(GrandPurchase p) {
+    final typeConfig = _typeByName[p.type];
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
@@ -140,7 +159,7 @@ class _ReportPageState extends State<ReportPage> {
           Row(
             children: [
               Expanded(
-                child: Text(p.displayName,
+                child: Text(purchaseDisplayName(p, typeConfig),
                     style: const TextStyle(fontSize: 13)),
               ),
               Text(_fmt.format(p.price),
@@ -156,68 +175,139 @@ class _ReportPageState extends State<ReportPage> {
               padding: const EdgeInsets.only(top: 2, left: 8),
               child: Text(p.desc!,
                   style: const TextStyle(
-                      fontSize: 11, fontStyle: FontStyle.italic, color: Colors.grey)),
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                      color: Colors.grey)),
             ),
         ],
       ),
     );
   }
 
+  Widget _buildCategorySection(PurchaseType type, List<GrandPurchase> items) {
+    final total = items.fold<double>(0, (s, p) => s + p.price);
+    final expanded = _expandedTypes.contains(type.name);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () {
+            setState(() {
+              if (expanded) {
+                _expandedTypes.remove(type.name);
+              } else {
+                _expandedTypes.add(type.name);
+              }
+            });
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Icon(
+                  expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    type.name,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                ),
+                Text(
+                  _fmt.format(total),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (expanded) ...[
+          if (items.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(left: 24, bottom: 8),
+              child: Text('No purchases',
+                  style: TextStyle(fontSize: 13, color: Colors.grey)),
+            )
+          else
+            ...items.map(_purchaseRow),
+        ],
+        const Divider(height: 1),
+      ],
+    );
+  }
+
   Widget _buildSpecialSection() {
-    if (_specialRows.isEmpty) return const SizedBox.shrink();
+    if (_specialRows.isEmpty && _purchaseTypes.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     final budget = PrefsService.dailyBudget.value;
     final report = computeMonthlyReport(_year, _month, _rows, budget);
 
-    final foodItems = _specialRows.where((p) => p.type == 'food&drink').toList();
-    final otherItems = List<GrandPurchase>.from(
-        _specialRows.where((p) => p.type != 'food&drink'))
-      ..sort((a, b) => a.date.compareTo(b.date));
-
-    final totalFoodDrink = foodItems.fold<double>(0, (s, p) => s + p.price);
-    final totalFoodBudgetLeft = report.totalLeft - totalFoodDrink;
-
-    final totalOtherPurchases = otherItems.fold<double>(0, (s, p) => s + p.price);
-    final totalAll = totalFoodDrink + totalOtherPurchases;
-    final grandTotal = totalAll + report.totalDailyFood;
-
-    // Per-type totals for other items
-    final typeMap = <String, double>{};
-    for (final p in otherItems) {
-      typeMap[p.type] = (typeMap[p.type] ?? 0) + p.price;
+    final grouped = <String, List<GrandPurchase>>{};
+    for (final p in _specialRows) {
+      grouped.putIfAbsent(p.type, () => []).add(p);
     }
+    for (final items in grouped.values) {
+      items.sort((a, b) => a.date.compareTo(b.date));
+    }
+
+    final allSpecialTotal =
+        _specialRows.fold<double>(0, (s, p) => s + p.price);
+    final grandTotal = report.totalDailyFood + allSpecialTotal;
+
+    final deductingTypes =
+        _purchaseTypes.where((t) => t.deductFromBudget).toList();
+
+    final categoriesWithPurchases = _purchaseTypes
+        .where((t) => grouped.containsKey(t.name))
+        .toList();
+
+    final unknownTypes = grouped.keys
+        .where((name) => !_typeByName.containsKey(name))
+        .toList()
+      ..sort();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Divider(height: 32),
+        _sectionTitle('Special Purchases'),
 
-        // ── Food & Drink ─────────────────────────────────────────────
-        _sectionTitle('Food & Drink'),
-        if (foodItems.isEmpty)
-          const Text('No food & drink purchases',
+        if (_specialRows.isEmpty)
+          const Text('No special purchases',
               style: TextStyle(fontSize: 13, color: Colors.grey))
-        else
-          ...foodItems.map(_purchaseRow),
-        const SizedBox(height: 8),
-        _summaryLine('Total food & drink purchase', totalFoodDrink),
-        _summaryLine(
-          'Total food & drink budget left',
-          totalFoodBudgetLeft,
-          color: totalFoodBudgetLeft >= 0 ? Colors.green : Colors.red,
-        ),
-
-        // ── Other types ──────────────────────────────────────────────
-        if (otherItems.isNotEmpty) ...[
-          _sectionTitle('Other Purchases'),
-          ...otherItems.map(_purchaseRow),
-          const SizedBox(height: 8),
-          ...typeMap.entries.map(
-            (e) => _summaryLine('Total ${e.key}', e.value),
+        else ...[
+          ...categoriesWithPurchases.map(
+            (t) => _buildCategorySection(t, grouped[t.name]!),
+          ),
+          ...unknownTypes.map(
+            (name) => _buildCategorySection(
+              PurchaseType(name: name),
+              grouped[name]!,
+            ),
           ),
         ],
 
-        // ── Grand total ──────────────────────────────────────────────
+        if (deductingTypes.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          ...deductingTypes.map((t) {
+            final categoryTotal = (grouped[t.name] ?? [])
+                .fold<double>(0, (s, p) => s + p.price);
+            final budgetLeft = report.totalLeft - categoryTotal;
+            return _summaryLine(
+              'Total ${t.name} budget left',
+              budgetLeft,
+              color: budgetLeft >= 0 ? Colors.green : Colors.red,
+            );
+          }),
+        ],
+
         const Divider(height: 24),
         _summaryLine('Grand Total', grandTotal,
             color: Theme.of(context).colorScheme.primary),
@@ -236,7 +326,12 @@ class _ReportPageState extends State<ReportPage> {
           Row(children: [
             DropdownButton<int>(
               value: _month,
-              items: List.generate(12, (i) => DropdownMenuItem(value: i + 1, child: Text(DateFormat.MMMM().format(DateTime(0, i + 1))))),
+              items: List.generate(
+                  12,
+                  (i) => DropdownMenuItem(
+                      value: i + 1,
+                      child: Text(
+                          DateFormat.MMMM().format(DateTime(0, i + 1))))),
               onChanged: (v) {
                 if (v == null) return;
                 setState(() => _month = v);
@@ -246,7 +341,11 @@ class _ReportPageState extends State<ReportPage> {
             const SizedBox(width: 12),
             DropdownButton<int>(
                 value: _year,
-                items: List.generate(5, (i) => DropdownMenuItem(value: DateTime.now().year - 2 + i, child: Text('${DateTime.now().year - 2 + i}'))),
+                items: List.generate(
+                    5,
+                    (i) => DropdownMenuItem(
+                        value: DateTime.now().year - 2 + i,
+                        child: Text('${DateTime.now().year - 2 + i}'))),
                 onChanged: (v) {
                   if (v == null) return;
                   setState(() => _year = v);
