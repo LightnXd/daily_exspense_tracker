@@ -30,128 +30,47 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _showTypeDialog({PurchaseType? existing}) async {
-    final formKey = GlobalKey<FormState>();
-    final nameCtrl = TextEditingController(text: existing?.name ?? '');
-    var useColor = existing?.useColor ?? false;
-    var deductFromBudget = existing?.deductFromBudget ?? false;
-    final isEdit = existing != null;
-
-    await showDialog<void>(
+    final result = await showDialog<_CategoryFormResult>(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            return AlertDialog(
-              title: Text(isEdit ? 'Edit Category' : 'Add Category'),
-              content: SingleChildScrollView(
-                child: Form(
-                  key: formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextFormField(
-                        controller: nameCtrl,
-                        decoration: const InputDecoration(labelText: 'Name'),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) return 'Required';
-                          return null;
-                        },
-                      ),
-                      CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Use color field'),
-                        subtitle: const Text(
-                          'Show a color input when adding purchases of this type',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                        value: useColor,
-                        onChanged: (v) =>
-                            setDialogState(() => useColor = v ?? false),
-                      ),
-                      CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Deduct from budget'),
-                        subtitle: const Text(
-                          'Purchases in this category reduce the monthly food budget left',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                        value: deductFromBudget,
-                        onChanged: (v) => setDialogState(
-                            () => deductFromBudget = v ?? false),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    if (!formKey.currentState!.validate()) return;
-
-                    final name = nameCtrl.text.trim();
-                    final duplicate = _types.any((t) =>
-                        t.name.toLowerCase() == name.toLowerCase() &&
-                        t.id != existing?.id);
-                    if (duplicate) {
-                      ScaffoldMessenger.of(ctx).showSnackBar(
-                        const SnackBar(
-                          content: Text('A category with this name already exists'),
-                        ),
-                      );
-                      return;
-                    }
-
-                    try {
-                      if (isEdit) {
-                        await DBHelper().updatePurchaseType(
-                          PurchaseType(
-                            id: existing.id,
-                            name: name,
-                            useColor: useColor,
-                            deductFromBudget: deductFromBudget,
-                            sortOrder: existing.sortOrder,
-                          ),
-                        );
-                      } else {
-                        final maxOrder = _types.isEmpty
-                            ? 0
-                            : _types
-                                    .map((t) => t.sortOrder)
-                                    .reduce((a, b) => a > b ? a : b) +
-                                1;
-                        await DBHelper().insertPurchaseType(
-                          PurchaseType(
-                            name: name,
-                            useColor: useColor,
-                            deductFromBudget: deductFromBudget,
-                            sortOrder: maxOrder,
-                          ),
-                        );
-                      }
-                      if (ctx.mounted) Navigator.pop(ctx);
-                      await _load();
-                    } catch (e) {
-                      if (ctx.mounted) {
-                        ScaffoldMessenger.of(ctx).showSnackBar(
-                          SnackBar(content: Text('Error: $e')),
-                        );
-                      }
-                    }
-                  },
-                  child: Text(isEdit ? 'Save' : 'Add'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (ctx) => _CategoryFormDialog(
+        existing: existing,
+        existingTypes: _types,
+      ),
     );
-    nameCtrl.dispose();
+    if (result == null || !mounted) return;
+
+    try {
+      if (existing != null) {
+        await DBHelper().updatePurchaseType(
+          PurchaseType(
+            id: existing.id,
+            name: result.name,
+            useColor: result.useColor,
+            deductFromBudget: result.deductFromBudget,
+            sortOrder: existing.sortOrder,
+          ),
+        );
+      } else {
+        final maxOrder = _types.isEmpty
+            ? 0
+            : _types.map((t) => t.sortOrder).reduce((a, b) => a > b ? a : b) + 1;
+        await DBHelper().insertPurchaseType(
+          PurchaseType(
+            name: result.name,
+            useColor: result.useColor,
+            deductFromBudget: result.deductFromBudget,
+            sortOrder: maxOrder,
+          ),
+        );
+      }
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
   }
 
   Widget _flagChip(String label, Color color) {
@@ -201,6 +120,137 @@ class _SettingsPageState extends State<SettingsPage> {
                     );
                   },
                 ),
+    );
+  }
+}
+
+class _CategoryFormResult {
+  final String name;
+  final bool useColor;
+  final bool deductFromBudget;
+
+  _CategoryFormResult({
+    required this.name,
+    required this.useColor,
+    required this.deductFromBudget,
+  });
+}
+
+class _CategoryFormDialog extends StatefulWidget {
+  final PurchaseType? existing;
+  final List<PurchaseType> existingTypes;
+
+  const _CategoryFormDialog({
+    required this.existing,
+    required this.existingTypes,
+  });
+
+  @override
+  State<_CategoryFormDialog> createState() => _CategoryFormDialogState();
+}
+
+class _CategoryFormDialogState extends State<_CategoryFormDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameCtrl;
+  late bool _useColor;
+  late bool _deductFromBudget;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.existing?.name ?? '');
+    _useColor = widget.existing?.useColor ?? false;
+    _deductFromBudget = widget.existing?.deductFromBudget ?? false;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+
+    final name = _nameCtrl.text.trim();
+    final duplicate = widget.existingTypes.any((t) =>
+        t.name.toLowerCase() == name.toLowerCase() &&
+        t.id != widget.existing?.id);
+    if (duplicate) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('A category with this name already exists'),
+        ),
+      );
+      return;
+    }
+
+    Navigator.pop(
+      context,
+      _CategoryFormResult(
+        name: name,
+        useColor: _useColor,
+        deductFromBudget: _deductFromBudget,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEdit = widget.existing != null;
+
+    return AlertDialog(
+      title: Text(isEdit ? 'Edit Category' : 'Add Category'),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextFormField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(labelText: 'Name'),
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'Required';
+                  return null;
+                },
+              ),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Use color field'),
+                subtitle: const Text(
+                  'Show a color input when adding purchases of this type',
+                  style: TextStyle(fontSize: 12),
+                ),
+                value: _useColor,
+                onChanged: (v) => setState(() => _useColor = v ?? false),
+              ),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Deduct from budget'),
+                subtitle: const Text(
+                  'Purchases in this category reduce the monthly food budget left',
+                  style: TextStyle(fontSize: 12),
+                ),
+                value: _deductFromBudget,
+                onChanged: (v) =>
+                    setState(() => _deductFromBudget = v ?? false),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: _submit,
+          child: Text(isEdit ? 'Save' : 'Add'),
+        ),
+      ],
     );
   }
 }
